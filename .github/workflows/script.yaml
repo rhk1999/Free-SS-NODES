@@ -9,13 +9,53 @@ on:
     branches:
       - main  # 当创建 PR 到 main 分支时触发
 
+env:
+  # GitHub Access Token for Gist
+  GIST_PAT: ${{ secrets.GIST_PAT }}
+  # GitHub username and gist id, separated by '/'
+  GIST_LINK: ${{ secrets.GIST_LINK }}
+
 jobs:
   build:
-    runs-on: macos-latest  # 在 macOS 上编译
-
+    runs-on: macos-latest
     steps:
       - name: 获取仓库代码
-        uses: actions/checkout@v3  # 获取代码
+        uses: actions/checkout@v3
+
+      - name: 检查环境变量
+        run: |
+          if [ -z "$GIST_PAT" ]; then
+              echo "Error: 环境变量 'GIST_PAT' 不能为空"
+              exit 1
+          fi
+          if [ -z "$GIST_LINK" ]; then
+              echo "Error: 环境变量 'GIST_LINK' 不能为空"
+              exit 1
+          fi
+          LINK_PARTS=$(echo "$GIST_LINK" | awk -F'/' 'NF==2 && $1!="" && $2!=""')
+          if [ -z "$LINK_PARTS" ]; then
+              echo "Error: 环境变量 'GIST_LINK' 格式不正确，应为 'username/gist_id' 格式"
+              exit 1
+          fi
 
       - name: 执行文件点击打开获取ss节点信息
-        run: ./ss
+        run: |
+          ss_output=$(./ss)
+          echo "$ss_output"
+          echo "$ss_output" | grep '^ss://' > nodes.txt
+          echo "SS节点信息已获取并保存到 nodes.txt"
+
+      - name: 更新Gist
+        run: |
+          GIST_ID=$(echo "$GIST_LINK" | cut -d '/' -f 2)
+          gist_content=$(cat nodes.txt)
+          json_data=$(jq -n --arg content "$gist_content" '{"files":{"nodes.txt":{"content":$content}}}')
+          curl -X PATCH -H "Authorization: token $GIST_PAT" -H "Content-Type: application/json" -d "$json_data" https://api.github.com/gists/$GIST_ID
+
+      - name: 提交并推送 nodes.txt 文件
+        run: |
+          git config user.name "GitHub Action"
+          git config user.email "action@github.com"
+          git add nodes.txt
+          git commit -m "Update nodes.txt with latest SS node information"
+          git push origin main
